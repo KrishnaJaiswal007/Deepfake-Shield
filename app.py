@@ -1,12 +1,3 @@
-# ============================================================
-# DEEPFAKE SHIELD — GRADIO APP
-# Step 4: Deployment on Hugging Face Spaces
-# ============================================================
-# File structure needed on HF Spaces:
-#   app.py          ← this file
-#   requirements.txt
-#   deepfake_dual_branch_final.keras  ← upload your model
-
 import gradio as gr
 import numpy as np
 import tensorflow as tf
@@ -31,25 +22,21 @@ model.compile(
     metrics=['accuracy']
 )
 
-# Warm up
 dummy_s = np.zeros((1, 224, 224, 3), dtype=np.float32)
 dummy_f = np.zeros((1, 64, 64, 1),  dtype=np.float32)
 _ = model([dummy_s, dummy_f], training=False)
 print("Model ready.")
 
-CLASS_NAMES = ['Fake', 'Real']
-IMG_SIZE    = 224
+IMG_SIZE = 224
 
 
 # ── Preprocessing ────────────────────────────────────────────
 def preprocess_image(pil_img):
-    """Convert PIL image → spatial tensor."""
     img = np.array(pil_img.convert('RGB').resize((IMG_SIZE, IMG_SIZE)))
     img = preprocess_input(img.astype(np.float32))
-    return np.expand_dims(img, 0)  # (1,224,224,3)
+    return np.expand_dims(img, 0)
 
 def compute_fft(pil_img):
-    """Convert PIL image → FFT feature tensor."""
     img = np.array(pil_img.convert('L').resize((IMG_SIZE, IMG_SIZE)))
     img = img.astype(np.float32) / 255.0
     fft = np.fft.fft2(img)
@@ -57,17 +44,15 @@ def compute_fft(pil_img):
     mag = np.log(np.abs(fft_s) + 1e-8)
     mag = cv2.resize(mag, (64, 64))
     mag = (mag - mag.min()) / (mag.max() - mag.min() + 1e-8)
-    return np.expand_dims(mag, axis=(0, -1))  # (1,64,64,1)
+    return np.expand_dims(mag, axis=(0, -1))
 
 def get_display_img(pil_img):
-    """Normalize image for display."""
     img = np.array(pil_img.convert('RGB').resize((IMG_SIZE, IMG_SIZE)))
     return img.astype(np.float32) / 255.0
 
 
 # ── GradCAM ──────────────────────────────────────────────────
 def make_gradcam(spatial_tensor, fft_tensor):
-    """Input-gradient saliency map."""
     spatial_var = tf.Variable(tf.cast(spatial_tensor, tf.float32))
     fft_t       = tf.cast(fft_tensor, tf.float32)
 
@@ -76,7 +61,7 @@ def make_gradcam(spatial_tensor, fft_tensor):
         pred  = model([spatial_var, fft_t], training=False)
         score = pred[0][0]
 
-    grads   = tape.gradient(score, spatial_var)
+    grads = tape.gradient(score, spatial_var)
     if grads is None:
         return None
 
@@ -87,7 +72,6 @@ def make_gradcam(spatial_tensor, fft_tensor):
 
 
 def overlay_heatmap(heatmap, display_img, alpha=0.5):
-    """Blend heatmap onto image."""
     h = cv2.resize(heatmap, (IMG_SIZE, IMG_SIZE))
     h = np.uint8(255 * h)
     colored = cv2.applyColorMap(h, cv2.COLORMAP_JET)
@@ -97,29 +81,20 @@ def overlay_heatmap(heatmap, display_img, alpha=0.5):
     return blended
 
 
-# ── Main Prediction Function ─────────────────────────────────
+# ── Prediction ───────────────────────────────────────────────
 def predict(image):
-    """
-    Takes a PIL image → returns:
-    - prediction label + confidence
-    - FFT spectrum image
-    - GradCAM overlay image
-    - analysis text
-    """
     if image is None:
         return "Please upload an image.", None, None, ""
 
-    pil_img  = Image.fromarray(image) if isinstance(image, np.ndarray) else image
+    pil_img = Image.fromarray(image) if isinstance(image, np.ndarray) else image
 
-    spatial  = preprocess_image(pil_img)
-    fft      = compute_fft(pil_img)
-    disp     = get_display_img(pil_img)
+    spatial = preprocess_image(pil_img)
+    fft     = compute_fft(pil_img)
+    disp    = get_display_img(pil_img)
 
-    # Prediction
-    pred_score  = model.predict([spatial, fft], verbose=0)[0][0]
-    pred_label  = 'FAKE' if pred_score < 0.5 else 'REAL'
-    confidence  = (1 - pred_score) if pred_score < 0.5 else pred_score
-    confidence  = float(confidence) * 100
+    pred_score = model.predict([spatial, fft], verbose=0)[0][0]
+    pred_label = 'FAKE' if pred_score < 0.5 else 'REAL'
+    confidence = float((1 - pred_score) if pred_score < 0.5 else pred_score) * 100
 
     # FFT visualization
     fft_disp = fft[0, :, :, 0]
@@ -136,7 +111,7 @@ def predict(image):
     # GradCAM
     heatmap = make_gradcam(spatial, fft)
     if heatmap is not None:
-        overlay = overlay_heatmap(heatmap, disp)
+        overlay     = overlay_heatmap(heatmap, disp)
         gradcam_img = Image.fromarray(overlay)
     else:
         gradcam_img = pil_img
@@ -152,7 +127,7 @@ Key indicators analyzed:
 • Frequency domain: Anomalous high-frequency components in FFT spectrum
 • GradCAM focus: Highlighted regions show where manipulation was detected
 
-Note: Confidence below 70% may indicate ambiguous cases."""
+Note: This model is not 100% accurate. Always verify with multiple sources."""
     else:
         analysis = f"""✅ REAL IMAGE ({confidence:.1f}% confidence)
 
@@ -160,28 +135,23 @@ No significant manipulation artifacts detected.
 
 Analysis:
 • Spatial patterns: Natural pixel distributions
-• Frequency domain: Normal frequency distribution in FFT spectrum  
+• Frequency domain: Normal frequency distribution in FFT spectrum
 • GradCAM focus: Attention spread naturally across facial features
 
-Note: Sophisticated deepfakes may still evade detection."""
+Note: This model is not 100% accurate. Sophisticated deepfakes may still evade detection."""
 
     label_str = f"{'🔴 FAKE' if pred_label == 'FAKE' else '🟢 REAL'} — {confidence:.1f}% confidence"
-
     return label_str, fft_img, gradcam_img, analysis
 
 
-# ── Gradio Interface ─────────────────────────────────────────
+# ── Gradio UI ────────────────────────────────────────────────
 with gr.Blocks(
     title="DeepFake Shield",
-    theme=gr.themes.Soft(),
-    css="""
-        .header { text-align: center; margin-bottom: 20px; }
-        .result-box { font-size: 1.3em; font-weight: bold; }
-    """
+    theme=gr.themes.Soft()
 ) as demo:
 
     gr.HTML("""
-        <div class="header">
+        <div style="text-align:center; margin-bottom:20px">
             <h1>🛡️ DeepFake Shield</h1>
             <p>AI-powered deepfake detection using spatial + frequency domain analysis</p>
             <p><i>EfficientNetB4 + FFT Branch + GradCAM Explainability</i></p>
@@ -189,11 +159,13 @@ with gr.Blocks(
     """)
 
     with gr.Row():
+
+        # ── Left Column ──────────────────────────────────────
         with gr.Column(scale=1):
             input_image = gr.Image(
                 label="Upload Face Image",
                 type="pil",
-                height=300
+                height=280
             )
             submit_btn = gr.Button(
                 "🔍 Analyze Image",
@@ -201,20 +173,46 @@ with gr.Blocks(
                 size="lg"
             )
 
+            gr.HTML("""
+                <div style="background:#2d2d2d; padding:10px;
+                            border-radius:8px; margin:12px 0;
+                            border-left:4px solid #ff9800">
+                    <span style="color:#ff9800; font-weight:bold">⚠️ Disclaimer:</span>
+                    <span style="color:#cccccc"> Model accuracy ~77%.
+                    Not 100% correct — may misclassify some images.
+                    Always verify with multiple sources.</span>
+                </div>
+            """)
+
+            gr.Markdown("### 🔴 Deepfake Samples")
             gr.Examples(
-                examples=[],  # Add example image paths here if available
-                inputs=input_image
+                examples=[
+                    ["sample_1_fake.jpg"],
+                    ["sample_3_fake.jpg"]
+                ],
+                inputs=input_image,
+                label="AI-generated fake faces"
             )
 
+            gr.Markdown("### 🟢 Real Samples")
+            gr.Examples(
+                examples=[
+                    ["sample_2_real.jpg"],
+                    ["sample_4_real.jpg"]
+                ],
+                inputs=input_image,
+                label="Genuine real faces"
+            )
+
+        # ── Right Column ─────────────────────────────────────
         with gr.Column(scale=1):
             prediction_label = gr.Textbox(
                 label="Prediction",
-                elem_classes=["result-box"],
                 interactive=False
             )
             analysis_text = gr.Textbox(
                 label="Analysis",
-                lines=10,
+                lines=12,
                 interactive=False
             )
 
@@ -230,11 +228,10 @@ with gr.Blocks(
 
     gr.HTML("""
         <div style="text-align:center; margin-top:20px; color:gray; font-size:0.85em">
-            <p>Model: EfficientNetB4 + Frequency Domain Branch | 
+            <p>Model: EfficientNetB4 + Frequency Domain Branch |
                Trained on: Deepfake & Real Images Dataset |
                Built by: Krishna Jaiswal</p>
-            <p>⚠️ This tool is for educational purposes. 
-               Always verify with multiple sources.</p>
+            <p>⚠️ For educational purposes only.</p>
         </div>
     """)
 
