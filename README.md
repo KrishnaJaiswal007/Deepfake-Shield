@@ -182,7 +182,7 @@ python app.py
 ## 👨‍💻 Author
 
 **Krishna Jaiswal**
-B.Tech CSE (AI & ML) — VIPS-TC, GGSIPU
+B.Tech(AI & ML) — VIPS-TC, GGSIPU
 
 - 🐙 [GitHub](https://github.com/KrishnaJaiswal007)
 - 🤗 [Hugging Face](https://huggingface.co/Krishna-Jaiswal)
